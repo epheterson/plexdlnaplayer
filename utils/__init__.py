@@ -218,12 +218,22 @@ def upnp_error_code(body: str):
     return m.group(1) if m else None
 
 
-def is_transient_failure(status: int, code):
+# Actions where "not ready yet" is a real, passing condition: a renderer coming
+# out of standby refuses to start playing until it has woken up. Everything else
+# is a state error that will not resolve by asking again - a STOPPED transport
+# answers Pause with 701 forever - and retrying it only delays the failure. That
+# matters because these calls block a request the Plex controller is waiting on,
+# and a controller that waits too long reports "could not switch to player".
+RETRYABLE_ACTIONS = {"Play", "SetAVTransportURI", "SetNextAVTransportURI"}
+
+
+def is_transient_failure(status: int, code, action=None):
     """Whether a failed control request is worth trying again."""
     if code in PERMANENT_UPNP_ERRORS:
         return False
     if code in TRANSIENT_UPNP_ERRORS:
-        return True
+        # only the actions that can legitimately be "not ready yet"
+        return action is None or action in RETRYABLE_ACTIONS
     # 404 shows up while the renderer's UPnP stack is still coming up, and a bare
     # 5xx with no fault body is not a considered refusal either.
     return status == 404 or (status >= 500 and code is None)

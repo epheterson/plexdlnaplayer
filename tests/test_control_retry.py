@@ -148,3 +148,35 @@ class ClampElapsedTest(unittest.TestCase):
         from utils import clamp_elapsed
         self.assertEqual(clamp_elapsed(None, 205917), None)
         self.assertEqual(clamp_elapsed("", 205917), "")
+
+
+class RetryScopeTest(unittest.TestCase):
+    """Retries must not delay a request the Plex controller is waiting on.
+
+    A 6-second Pause retry made playMedia take 6.1s and Plexamp reported
+    "could not switch to player". 701 on Pause means the transport is STOPPED,
+    which never resolves; 701 on Play means the amp is still waking, which does.
+    """
+
+    def test_play_still_retries_when_not_ready(self):
+        from utils import is_transient_failure
+        self.assertTrue(is_transient_failure(500, "701", "Play"))
+        self.assertTrue(is_transient_failure(500, "701", "SetAVTransportURI"))
+
+    def test_pause_and_stop_fail_fast(self):
+        from utils import is_transient_failure
+        self.assertFalse(is_transient_failure(500, "701", "Pause"))
+        self.assertFalse(is_transient_failure(500, "701", "Stop"))
+        self.assertFalse(is_transient_failure(500, "705", "Pause"))
+
+    def test_seek_still_fails_fast(self):
+        from utils import is_transient_failure
+        self.assertFalse(is_transient_failure(500, "710", "Seek"))
+
+    def test_starting_stack_still_retried_for_play(self):
+        from utils import is_transient_failure
+        self.assertTrue(is_transient_failure(404, None, "Play"))
+
+    def test_unknown_action_keeps_old_behaviour(self):
+        from utils import is_transient_failure
+        self.assertTrue(is_transient_failure(500, "701", None))

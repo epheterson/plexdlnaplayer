@@ -13,7 +13,7 @@ from plex.adapters import remove_adapter
 from utils import (xml2dict, UPNP_RC_SERVICE_TYPE, UPNP_AVT_SERVICE_TYPE, g,
                    same_service, service_version, soap_response_body, as_list,
                    CONTROL_RETRY_DELAYS, CONTROL_RETRY_BUDGET, upnp_error_code,
-                   is_transient_failure)
+                   is_transient_failure, RETRYABLE_ACTIONS)
 from settings import settings
 
 PAYLOAD_FMT = '<?xml version="1.0" encoding="utf-8"?><s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" ' \
@@ -100,7 +100,7 @@ class DlnaDeviceService(object):
                     if not response.ok:
                         body = await response.text()
                         code = upnp_error_code(body)
-                        if is_transient_failure(response.status, code):
+                        if is_transient_failure(response.status, code, action):
                             last_error = f"{response.status} upnp error {code}"
                             print(f"dlna {self.device.name} {action} not ready ({last_error}), retrying")
                             continue
@@ -116,7 +116,8 @@ class DlnaDeviceService(object):
                 # A renderer waking from standby refuses connections before it
                 # refuses actions, so those are retried here too, and only counted
                 # against the device once the retries are spent.
-                if isinstance(e, (ClientConnectorError, asyncio.TimeoutError)):
+                if isinstance(e, (ClientConnectorError, asyncio.TimeoutError)) \
+                        and action in RETRYABLE_ACTIONS:
                     last_error = f"{e.__class__.__name__} {e}"
                     continue
                 print(f"dlna {self.device.name} {action} control error {e.__class__.__name__} {str(e)}")
