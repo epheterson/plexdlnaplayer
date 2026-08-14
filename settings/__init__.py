@@ -98,9 +98,63 @@ class Settings(BaseSettings):
         known = info.get("known_device", {})
         if known.get("location_url") == location_url and known.get("name") == name:
             return
-        info["known_device"] = {"name": name, "location_url": location_url}
+        # merge rather than replace: this record also carries the played flag and
+        # the remembered volume, and a renderer that merely moved address must not
+        # lose either of them
+        known.update({"name": name, "location_url": location_url})
+        info["known_device"] = known
         data[uuid] = info
         self.save_data(data)
+
+    def mark_device_played(self, uuid):
+        """Record that playback actually started on this renderer.
+
+        Only renderers someone has really played to are worth keeping in Plex's
+        player list while unreachable. Something merely seen once on the network
+        is not a fixture of the house and should still disappear normally.
+        """
+        data = self.load_data()
+        info = data.get(uuid, {})
+        known = info.get("known_device", {})
+        if known.get("played"):
+            return
+        known["played"] = True
+        info["known_device"] = known
+        data[uuid] = info
+        self.save_data(data)
+
+    def device_was_played(self, uuid):
+        """Whether this renderer has ever been played to."""
+        info = self.load_data().get(uuid) or {}
+        return bool((info.get("known_device") or {}).get("played"))
+
+    def remember_volume(self, uuid, volume):
+        """Keep the last usable volume a renderer reported.
+
+        The Hegel adopts whatever volume the player sends when a stream starts,
+        and reports 0 on waking from standby. Without a remembered value the
+        player publishes that 0 back and playback begins silent.
+        """
+        try:
+            volume = int(volume)
+        except (TypeError, ValueError):
+            return
+        if volume <= 0:
+            return
+        data = self.load_data()
+        info = data.get(uuid, {})
+        known = info.get("known_device", {})
+        if known.get("volume") == volume:
+            return
+        known["volume"] = volume
+        info["known_device"] = known
+        data[uuid] = info
+        self.save_data(data)
+
+    def last_known_volume(self, uuid):
+        """Last usable volume for this renderer, or None."""
+        info = self.load_data().get(uuid) or {}
+        return (info.get("known_device") or {}).get("volume")
 
     def known_device_urls(self):
         """Description URLs of every renderer that has registered before."""

@@ -180,3 +180,85 @@ class RetryScopeTest(unittest.TestCase):
     def test_unknown_action_keeps_old_behaviour(self):
         from utils import is_transient_failure
         self.assertTrue(is_transient_failure(500, "701", None))
+
+
+class PlayedDeviceMemoryTest(unittest.TestCase):
+    """A renderer someone plays to should survive going unreachable."""
+
+    def setUp(self):
+        from settings import settings
+        self.settings = settings
+        self.tmp = tempfile.TemporaryDirectory()
+        self._old = settings.config_path
+        settings.config_path = self.tmp.name
+
+    def tearDown(self):
+        self.settings.config_path = self._old
+        self.tmp.cleanup()
+
+    def test_unplayed_device_is_not_protected(self):
+        # merely seen on the network is not enough to keep it listed
+        self.settings.remember_device("u1", "Amp", "http://a/desc.xml")
+        self.assertFalse(self.settings.device_was_played("u1"))
+
+    def test_played_device_is_protected(self):
+        self.settings.remember_device("u1", "Amp", "http://a/desc.xml")
+        self.settings.mark_device_played("u1")
+        self.assertTrue(self.settings.device_was_played("u1"))
+
+    def test_unknown_device_is_not_protected(self):
+        self.assertFalse(self.settings.device_was_played("nope"))
+
+    def test_played_flag_survives_a_url_change(self):
+        self.settings.mark_device_played("u1")
+        self.settings.remember_device("u1", "Amp", "http://moved/desc.xml")
+        self.assertTrue(self.settings.device_was_played("u1"))
+        self.assertEqual(self.settings.known_device_urls(), ["http://moved/desc.xml"])
+
+
+class VolumeMemoryTest(unittest.TestCase):
+    """The amp adopts the player's volume, so a remembered level avoids silence."""
+
+    def setUp(self):
+        from settings import settings
+        self.settings = settings
+        self.tmp = tempfile.TemporaryDirectory()
+        self._old = settings.config_path
+        settings.config_path = self.tmp.name
+
+    def tearDown(self):
+        self.settings.config_path = self._old
+        self.tmp.cleanup()
+
+    def test_remembers_a_usable_volume(self):
+        self.settings.remember_volume("u1", 31)
+        self.assertEqual(self.settings.last_known_volume("u1"), 31)
+
+    def test_zero_is_never_remembered(self):
+        # zero is exactly the value we are trying to avoid restoring
+        self.settings.remember_volume("u1", 31)
+        self.settings.remember_volume("u1", 0)
+        self.assertEqual(self.settings.last_known_volume("u1"), 31)
+
+    def test_negative_and_garbage_ignored(self):
+        self.settings.remember_volume("u1", 31)
+        self.settings.remember_volume("u1", -5)
+        self.settings.remember_volume("u1", None)
+        self.settings.remember_volume("u1", "loud")
+        self.assertEqual(self.settings.last_known_volume("u1"), 31)
+
+    def test_updates_to_the_latest_level(self):
+        self.settings.remember_volume("u1", 31)
+        self.settings.remember_volume("u1", 42)
+        self.assertEqual(self.settings.last_known_volume("u1"), 42)
+
+    def test_unknown_device_has_no_volume(self):
+        self.assertIsNone(self.settings.last_known_volume("nope"))
+
+    def test_volume_and_played_coexist_with_token(self):
+        self.settings.set_token_for_uuid("u1", "tok")
+        self.settings.mark_device_played("u1")
+        self.settings.remember_volume("u1", 31)
+        self.assertEqual(self.settings.get_token_for_uuid("u1"), "tok")
+        self.assertTrue(self.settings.device_was_played("u1"))
+        self.assertEqual(self.settings.last_known_volume("u1"), 31)

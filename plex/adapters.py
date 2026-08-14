@@ -230,7 +230,20 @@ class DlnaState(object):
         if volume and volume.result:
             volume = volume.result
             volume = int(volume.CurrentVolume)
-            self.volume = convert_volume(volume, self.dlna.volume_max, self.dlna.volume_min, 100, 0, 1)
+            volume = convert_volume(volume, self.dlna.volume_max, self.dlna.volume_min, 100, 0, 1)
+            # The renderer reports 0 on waking from standby, and because it adopts
+            # whatever volume the player sends, publishing that 0 makes the next
+            # play silent. Remember the last usable level and hand that back
+            # instead, so the amp resumes where it was left rather than at zero.
+            if volume > 0:
+                settings.remember_volume(self.dlna.uuid, volume)
+            elif self._volume in (None, 0):
+                remembered = settings.last_known_volume(self.dlna.uuid)
+                if remembered:
+                    print(f"{self.dlna.name} woke reporting volume 0, "
+                          f"restoring last known {remembered}")
+                    volume = remembered
+            self.volume = volume
         if muted and muted.result:
             muted = muted.result
             self.muted = muted.CurrentMute
@@ -412,6 +425,9 @@ class PlexDlnaAdapter(object):
             pass
 
     async def play_media(self, container_key, key=None, offset=0, paused=False, query_params: QueryParams = None):
+        # Someone chose this renderer and pressed play, which is what makes it a
+        # fixture worth keeping in the player list when it later goes to sleep.
+        settings.mark_device_played(self.dlna.uuid)
         if query_params is not None:
             self.plex_lib.update(query_params)
         self.state.update(uri=None)
