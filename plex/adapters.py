@@ -231,18 +231,12 @@ class DlnaState(object):
             volume = volume.result
             volume = int(volume.CurrentVolume)
             volume = convert_volume(volume, self.dlna.volume_max, self.dlna.volume_min, 100, 0, 1)
-            # The renderer reports 0 on waking from standby, and because it adopts
-            # whatever volume the player sends, publishing that 0 makes the next
-            # play silent. Remember the last usable level and hand that back
-            # instead, so the amp resumes where it was left rather than at zero.
+            # Remember the last usable level for diagnostics only. The reported
+            # volume is published as-is: if the amp really is at zero that is the
+            # truth, and substituting a remembered number would misreport the
+            # hardware rather than fix anything.
             if volume > 0:
                 settings.remember_volume(self.dlna.uuid, volume)
-            elif self._volume in (None, 0):
-                remembered = settings.last_known_volume(self.dlna.uuid)
-                if remembered:
-                    print(f"{self.dlna.name} woke reporting volume 0, "
-                          f"restoring last known {remembered}")
-                    volume = remembered
             self.volume = volume
         if muted and muted.result:
             muted = muted.result

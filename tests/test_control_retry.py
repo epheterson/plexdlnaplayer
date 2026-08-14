@@ -262,3 +262,53 @@ class VolumeMemoryTest(unittest.TestCase):
         self.assertEqual(self.settings.get_token_for_uuid("u1"), "tok")
         self.assertTrue(self.settings.device_was_played("u1"))
         self.assertEqual(self.settings.last_known_volume("u1"), 31)
+
+
+class Fake:
+    def __init__(self, uuid, location_url):
+        self.uuid = uuid
+        self.location_url = location_url
+
+
+class DeviceMovedTest(unittest.TestCase):
+    """A renderer that changes IP must replace its old entry, not duplicate it."""
+
+    def test_unseen_device_registers(self):
+        from utils import device_registration_action
+        action, existing = device_registration_action([], "u1", "http://10.0.0.12:16500/d.xml")
+        self.assertEqual(action, "register")
+        self.assertIsNone(existing)
+
+    def test_same_device_same_address_is_ignored(self):
+        from utils import device_registration_action
+        d = Fake("u1", "http://10.0.0.12:16500/d.xml")
+        action, existing = device_registration_action([d], "u1", "http://10.0.0.12:16500/d.xml")
+        self.assertEqual(action, "ignore")
+        self.assertIs(existing, d)
+
+    def test_same_device_new_address_replaces(self):
+        from utils import device_registration_action
+        d = Fake("u1", "http://10.0.0.12:16500/d.xml")
+        # DHCP moved the amp
+        action, existing = device_registration_action([d], "u1", "http://10.0.0.99:16500/d.xml")
+        self.assertEqual(action, "replace")
+        self.assertIs(existing, d)
+
+    def test_different_device_at_that_address_still_registers(self):
+        from utils import device_registration_action
+        d = Fake("u1", "http://10.0.0.12:16500/d.xml")
+        action, existing = device_registration_action([d], "u2", "http://10.0.0.13:16500/d.xml")
+        self.assertEqual(action, "register")
+
+    def test_device_without_uuid_is_not_matched(self):
+        from utils import device_registration_action
+        d = Fake(None, "http://10.0.0.12:16500/d.xml")
+        action, _ = device_registration_action([d], "u1", "http://10.0.0.99:16500/d.xml")
+        self.assertEqual(action, "register")
+
+    def test_moved_device_is_found_among_several(self):
+        from utils import device_registration_action
+        devs = [Fake("a", "http://1/d.xml"), Fake("u1", "http://2/d.xml"), Fake("c", "http://3/d.xml")]
+        action, existing = device_registration_action(devs, "u1", "http://9/d.xml")
+        self.assertEqual(action, "replace")
+        self.assertEqual(existing.location_url, "http://2/d.xml")
