@@ -55,7 +55,7 @@ async def on_new_dlna_device(location_url):
 dlna_discover = DlnaDiscover(on_new_dlna_device)
 
 
-async def register_known_devices():
+async def register_known_devices(quiet=False):
     """Go straight to renderers that have registered here before.
 
     Discovery only learns about a renderer when it answers an M-SEARCH or
@@ -66,18 +66,55 @@ async def register_known_devices():
     Failures are ignored on purpose: a renderer that is off or has moved is
     exactly what discovery is for, and it gets picked up the usual way.
     """
-    urls = settings.known_device_urls()
+    registered = {d.location_url for d in devices}
+    urls = [u for u in settings.known_device_urls() if u not in registered]
     if not urls:
         return
-    print(f"trying {len(urls)} remembered dlna device(s)")
+    if not quiet:
+        print(f"trying {len(urls)} remembered dlna device(s)")
 
     async def probe(url):
         try:
             await on_new_dlna_device(url)
         except Exception as e:
-            print(f"remembered device {url} not reachable: {e}")
+            if not quiet:
+                print(f"remembered device {url} not reachable: {e}")
 
     await asyncio.gather(*[probe(u) for u in urls])
+
+
+async def watch_known_devices(interval=60):
+    """Put remembered renderers back after they drop out.
+
+    A renderer that stops answering is removed after ERROR_COUNT_TO_REMOVE
+    failed control calls, and nothing puts it back: discovery only re-adds on an
+    M-SEARCH answer or an announcement, so a renderer that goes quiet stays
+    missing from Plex until it announces itself again or the bridge restarts.
+    Moving an amp between network interfaces was enough to lose it for a day.
+
+    Re-probing the remembered URLs closes that. It is safe to repeat: URLs
+    already registered are dropped before any request is made, so a steady
+    state costs nothing.
+    """
+    print(f"known device watch every {interval}s")
+    missing = set()
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            await register_known_devices(quiet=True)
+        except Exception as e:
+            print(f"known device watch error {e.__class__.__name__} {e}")
+            continue
+        # Silence on every sweep makes "retrying" and "quietly broken" look the
+        # same, so say something once when a renderer goes missing and once when
+        # it comes back, and nothing in between.
+        registered = {d.location_url for d in devices}
+        still_missing = {u for u in settings.known_device_urls() if u not in registered}
+        for url in still_missing - missing:
+            print(f"remembered device {url} is missing, retrying every {interval}s")
+        for url in missing - still_missing:
+            print(f"remembered device {url} is back")
+        missing = still_missing
 
 
 def guess_host_ip(request: Request):
@@ -117,6 +154,7 @@ async def build_response(content: str, device: DlnaDevice = None, target_uuid: s
 async def on_startup():
     g.http = aiohttp.ClientSession(fallback_charset_resolver=fallback_charset)
     asyncio.create_task(register_known_devices(), name="known devices")
+    asyncio.create_task(watch_known_devices(), name="known device watch")
     await dlna_discover.discover()
     asyncio.create_task(sub_man.start())
     await get_device_data()
