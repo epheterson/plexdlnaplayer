@@ -55,7 +55,7 @@ async def on_new_dlna_device(location_url):
 dlna_discover = DlnaDiscover(on_new_dlna_device)
 
 
-async def register_known_devices():
+async def register_known_devices(quiet=False):
     """Go straight to renderers that have registered here before.
 
     Discovery only learns about a renderer when it answers an M-SEARCH or
@@ -66,16 +66,19 @@ async def register_known_devices():
     Failures are ignored on purpose: a renderer that is off or has moved is
     exactly what discovery is for, and it gets picked up the usual way.
     """
-    urls = settings.known_device_urls()
+    registered = {d.location_url for d in devices}
+    urls = [u for u in settings.known_device_urls() if u not in registered]
     if not urls:
         return
-    print(f"trying {len(urls)} remembered dlna device(s)")
+    if not quiet:
+        print(f"trying {len(urls)} remembered dlna device(s)")
 
     async def probe(url):
         try:
             await on_new_dlna_device(url)
         except Exception as e:
-            print(f"remembered device {url} not reachable: {e}")
+            if not quiet:
+                print(f"remembered device {url} not reachable: {e}")
 
     await asyncio.gather(*[probe(u) for u in urls])
 

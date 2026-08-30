@@ -320,6 +320,10 @@ class DlnaDevice(object):
 
     async def remove_self(self):
         devices.remove(self)
+        # Discovery keeps answering for this renderer every 30s; let those
+        # answers register it again instead of being deduped away.
+        from plex.plexserver import dlna_discover
+        dlna_discover.forget(self.location_url)
         from plex.adapters import adapter_by_device, remove_adapter
         from plex.subscribe import sub_man
         self.stop_subscribe()

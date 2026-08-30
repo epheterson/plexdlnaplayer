@@ -33,16 +33,32 @@ def get_protocol(discover):
 
         async def send_loop(self):
             while self.is_connected:
-                self.transport.sendto(SSDP_BROADCAST_MSG.encode("UTF-8"),
-                                      (SSDP_BROADCAST_ADDR, SSDP_BROADCAST_PORT))
+                # sendto raises while the interface is down or changing, and an
+                # escape here ends discovery for the life of the process: no
+                # M-SEARCH is ever broadcast again and no renderer is found.
+                try:
+                    self.transport.sendto(SSDP_BROADCAST_MSG.encode("UTF-8"),
+                                          (SSDP_BROADCAST_ADDR, SSDP_BROADCAST_PORT))
+                except Exception as e:
+                    print(f"dlna discover broadcast failed {e.__class__.__name__} {e}")
                 await asyncio.sleep(SEND_INTERVAL_SECS)
 
         def datagram_received(self, data, addr):
-            info = [a.split(":", 1)
-                    for a in data.decode("UTF-8").split("\r\n")[1:]]
+            # The socket is joined to the multicast group, so this receives
+            # NOTIFY traffic as well as answers to our M-SEARCH. ssdp:byebye
+            # carries no LOCATION, and anything on the network may send a
+            # payload that is not UTF-8, so neither can be assumed here.
+            try:
+                text = data.decode("UTF-8")
+            except UnicodeDecodeError:
+                return
+            info = [a.split(":", 1) for a in text.split("\r\n")[1:]]
             device = dict([(a[0].strip().lower(), a[1].strip())
                            for a in info if len(a) >= 2])
-            asyncio.create_task(discover.on_new_device(device['location']))
+            location = device.get('location')
+            if not location:
+                return
+            asyncio.create_task(discover.on_new_device(location))
 
         def error_received(self, exc):
             print('Error received:', exc)
@@ -67,6 +83,18 @@ class DlnaDiscover(object):
         if location_url not in self.device_locations:
             self.device_locations.append(location_url)
             await self.new_device_callback(location_url)
+
+    def forget(self, location_url):
+        """Make a URL eligible for discovery again.
+
+        device_locations exists so a renderer that is rejected, or that is not a
+        renderer at all, is not re-fetched on every sweep. It is not a registry:
+        once a device is removed, its URL has to leave this list or the M-SEARCH
+        answers that keep arriving every SEND_INTERVAL_SECS are all discarded and
+        the device can never come back.
+        """
+        if location_url in self.device_locations:
+            self.device_locations.remove(location_url)
 
     def init_socket(self):
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
